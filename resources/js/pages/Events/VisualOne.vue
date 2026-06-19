@@ -19,9 +19,11 @@ const props = defineProps<{
     cities: string[];
 }>();
 
-// Keep at most ~600 events in memory; the bidirectional sliding window loads
+// Keep at most ~2000 events in memory; the bidirectional sliding window loads
 // pages as you scroll in either direction and trims the far end, so both the
 // DOM (virtualized) and the JS array stay bounded without breaking scroll-up.
+// A larger window means fast back-scrolling rarely lands on a trimmed page that
+// must be re-fetched (the main cause of a momentary blank region).
 const {
     form,
     events,
@@ -35,7 +37,7 @@ const {
     loadMore,
     loadPrev,
     applyFilters,
-} = useEvents(props.filters, { maxItems: 600 });
+} = useEvents(props.filters, { maxItems: 2000 });
 
 const selected = ref<EventCard | null>(null);
 const showCreate = ref(false);
@@ -134,7 +136,9 @@ const virtualizer = useVirtualizer(
         getScrollElement: () => (typeof document !== 'undefined' ? document.documentElement : null),
         estimateSize: () => ESTIMATED_ROW + ROW_GAP,
         scrollMargin: scrollMargin.value,
-        overscan: 4,
+        // Render extra rows beyond the viewport so a fast fling rarely outruns
+        // the rendered window and exposes the empty spacer (white gap).
+        overscan: 10,
     })),
 );
 
@@ -145,7 +149,9 @@ const totalHeight = computed(() => virtualizer.value.getTotalSize());
 // that triggers a fetch. The window is the scroller, so we read documentElement
 // geometry. We only auto-load after the first user scroll so the initial render
 // never cascades pages.
-const NEAR_EDGE = 600;
+// Start fetching well before an edge so data usually arrives before the user
+// scrolls into it — wider margin = fewer blank regions on fast scroll.
+const NEAR_EDGE = 1200;
 const hasScrolled = ref(false);
 
 function onScroll() {
@@ -316,7 +322,7 @@ onBeforeUnmount(() => {
                         :style="{ transform: `translateY(${vRow.start - scrollMargin}px)`, paddingBottom: `${ROW_GAP}px` }"
                     >
                         <Card
-                            v-for="event in rows[vRow.index]"
+                            v-for="event in rows[vRow.index] ?? []"
                             :key="event.id"
                             class="group card-in gap-0 overflow-hidden py-0 pb-4 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl"
                         >
@@ -384,6 +390,23 @@ onBeforeUnmount(() => {
                                 </Button>
                             </CardFooter>
                         </Card>
+
+                        <!-- Placeholder cards for a row whose data isn't loaded
+                             yet (e.g. fast scroll into a trimmed/not-yet-fetched
+                             region). Keeps the layout filled instead of showing
+                             a raw white gap until the fetch resolves. -->
+                        <div
+                            v-for="n in (rows[vRow.index] ? 0 : columns)"
+                            :key="`sk-${vRow.index}-${n}`"
+                            class="flex flex-col gap-3 rounded-xl border"
+                        >
+                            <Skeleton class="aspect-16/10 w-full rounded-b-none" />
+                            <div class="flex flex-col gap-2 p-4">
+                                <Skeleton class="h-5 w-2/3" />
+                                <Skeleton class="h-4 w-full" />
+                                <Skeleton class="h-4 w-1/2" />
+                            </div>
+                        </div>
                     </div>
                 </div>
 
