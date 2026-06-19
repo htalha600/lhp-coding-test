@@ -72,26 +72,29 @@ function formatDate(iso: string | null): string {
 // --- Virtualization -------------------------------------------------------
 // Only the rows near the viewport are rendered, so memory stays flat no matter
 // how far the user scrolls. We virtualize ROWS; each row holds `columns` cards.
-const scrollEl = ref<HTMLElement | null>(null);
+//
+// The single scroller is the WINDOW (document), not an inner panel — the app
+// layout uses min-h-svh ancestors that let the document grow naturally, so the
+// page produces exactly one (outer) scrollbar. The virtualizer is pointed at
+// document.documentElement and offset by the grid's distance from the document
+// top (scrollMargin), so virtual positions line up with the real page scroll.
+const scrollEl = ref<HTMLElement | null>(null); // sizing/column measurement only
+const gridEl = ref<HTMLElement | null>(null); // virtualized grid; gives scroll offset
 const ROW_GAP = 20; // matches gap-5
 const ESTIMATED_ROW = 380; // card height + gap; refined by measureElement
 
-// The panel must be a height-bounded scroll container, but the surrounding
-// layout uses min-height ancestors that never pin a concrete height — so a pure
-// flex-1 child just grows and the window scrolls instead. We measure the panel's
-// real top offset and set its height to exactly (viewport - top), which makes it
-// the single scroller with no magic numbers and no clipped overflow.
-const panelHeight = ref<string>('100svh');
+// Distance from the document top to the top of the virtualized grid. The
+// virtualizer needs this so its internal scroll math matches window scroll.
+const scrollMargin = ref(0);
 
-function measurePanelHeight() {
-    const el = scrollEl.value;
+function measureScrollMargin() {
+    const el = gridEl.value;
 
     if (!el) {
         return;
     }
 
-    const top = el.getBoundingClientRect().top;
-    panelHeight.value = `${Math.max(0, window.innerHeight - top)}px`;
+    scrollMargin.value = el.getBoundingClientRect().top + window.scrollY;
 }
 
 const columns = ref(3);
@@ -107,7 +110,7 @@ function computeColumns(width: number) {
 
 useResizeObserver(scrollEl, (entries) => {
     computeColumns(entries[0].contentRect.width);
-    measurePanelHeight();
+    measureScrollMargin();
 });
 
 // Chunk the flat events list into rows of `columns`.
@@ -125,8 +128,12 @@ const rows = computed<EventCard[][]>(() => {
 const virtualizer = useVirtualizer(
     computed(() => ({
         count: rows.value.length,
-        getScrollElement: () => scrollEl.value,
+        // The window is the scroller. documentElement is the scrollable root;
+        // scrollMargin offsets the virtual coordinate space by the grid's
+        // distance from the document top so positions match the real scroll.
+        getScrollElement: () => (typeof document !== 'undefined' ? document.documentElement : null),
         estimateSize: () => ESTIMATED_ROW + ROW_GAP,
+        scrollMargin: scrollMargin.value,
         overscan: 4,
     })),
 );
@@ -134,23 +141,22 @@ const virtualizer = useVirtualizer(
 const virtualRows = computed(() => virtualizer.value.getVirtualItems());
 const totalHeight = computed(() => virtualizer.value.getTotalSize());
 
-// Load based on real scroll geometry. NEAR_EDGE is the px from an edge that
-// triggers a fetch. The inner spacer div carries the full virtual height, so
-// scrollEl.scrollHeight is the true total content height (not just rendered
-// rows). The handler is bound directly in the template via @scroll, which
-// guarantees it fires on the element that actually scrolls. We only auto-load
-// after the first user scroll so the initial render never cascades pages.
+// Load based on real window scroll geometry. NEAR_EDGE is the px from an edge
+// that triggers a fetch. The window is the scroller, so we read documentElement
+// geometry. We only auto-load after the first user scroll so the initial render
+// never cascades pages.
 const NEAR_EDGE = 600;
 const hasScrolled = ref(false);
 
 function onScroll() {
-    const el = scrollEl.value;
-
-    if (!el || loading.value) {
+    if (loading.value) {
         return;
     }
 
-    if (el.scrollTop > 0) {
+    const doc = document.documentElement;
+    const scrollTop = window.scrollY;
+
+    if (scrollTop > 0) {
         hasScrolled.value = true;
     }
 
@@ -158,11 +164,11 @@ function onScroll() {
         return;
     }
 
-    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const distanceToBottom = doc.scrollHeight - scrollTop - window.innerHeight;
 
     if (distanceToBottom < NEAR_EDGE && hasMore()) {
         loadMore();
-    } else if (el.scrollTop < NEAR_EDGE && el.scrollTop > 0 && hasPrev()) {
+    } else if (scrollTop < scrollMargin.value + NEAR_EDGE && scrollTop > 0 && hasPrev()) {
         loadPrev();
     }
 }
@@ -175,16 +181,14 @@ function onScroll() {
 // count, which is accurate the moment loadMore() resolves.
 async function ensureScrollable() {
     for (let i = 0; i < 4; i++) {
-        const el = scrollEl.value;
-
-        if (!el || !hasMore()) {
+        if (!hasMore()) {
             break;
         }
 
         // One screen of buffer beyond the viewport so there's room to scroll.
         const loadedHeight = rows.value.length * (ESTIMATED_ROW + ROW_GAP);
 
-        if (loadedHeight > el.clientHeight * 2) {
+        if (loadedHeight > window.innerHeight * 2) {
             break;
         }
 
@@ -202,8 +206,8 @@ watch(droppedCount, (dropped) => {
     const removedRows = (dropped - lastDropped) / columns.value;
     lastDropped = dropped;
 
-    if (removedRows > 0 && scrollEl.value) {
-        scrollEl.value.scrollTop -= removedRows * (ESTIMATED_ROW + ROW_GAP);
+    if (removedRows > 0) {
+        window.scrollBy(0, -removedRows * (ESTIMATED_ROW + ROW_GAP));
     }
 });
 
@@ -214,12 +218,10 @@ watch(prependedCount, (prepended) => {
     const addedRows = (prepended - lastPrepended) / columns.value;
     lastPrepended = prepended;
 
-    if (addedRows > 0 && scrollEl.value) {
+    if (addedRows > 0) {
         // Adjust after the virtualizer re-lays-out the grown list.
         nextTick(() => {
-            if (scrollEl.value) {
-                scrollEl.value.scrollTop += addedRows * (ESTIMATED_ROW + ROW_GAP);
-            }
+            window.scrollBy(0, addedRows * (ESTIMATED_ROW + ROW_GAP));
         });
     }
 });
@@ -229,9 +231,7 @@ async function onApply() {
     lastDropped = 0;
     lastPrepended = 0;
 
-    if (scrollEl.value) {
-        scrollEl.value.scrollTop = 0;
-    }
+    window.scrollTo(0, 0);
 
     await applyFilters();
     await ensureScrollable();
@@ -242,22 +242,27 @@ onMounted(async () => {
         computeColumns(scrollEl.value.clientWidth);
     }
 
-    measurePanelHeight();
-    window.addEventListener('resize', measurePanelHeight, { passive: true });
+    await nextTick();
+    measureScrollMargin();
+    window.addEventListener('resize', measureScrollMargin, { passive: true });
+    window.addEventListener('scroll', onScroll, { passive: true });
 
     await loadMore();
+    await nextTick();
+    measureScrollMargin();
     await ensureScrollable();
 });
 
 onBeforeUnmount(() => {
-    window.removeEventListener('resize', measurePanelHeight);
+    window.removeEventListener('resize', measureScrollMargin);
+    window.removeEventListener('scroll', onScroll);
 });
 </script>
 
 <template>
     <Head title="Event Visuals — Grid" />
 
-    <div class="flex min-h-0 flex-1 flex-col bg-linear-to-b from-background to-muted/30">
+    <div ref="scrollEl" class="flex flex-1 flex-col bg-linear-to-b from-background to-muted/30">
         <div class="mx-auto flex w-full max-w-7xl flex-col gap-6 px-6 pt-6">
             <header class="flex flex-wrap items-start justify-between gap-3">
                 <div class="flex flex-col gap-1">
@@ -274,17 +279,12 @@ onBeforeUnmount(() => {
             <EventFilterBar v-model:form="form" :cities="cities" :total="total" @apply="onApply" />
         </div>
 
-        <!-- Virtualized scroll area: only on-screen rows are in the DOM. Its
-             height is measured to exactly fill the viewport below its top edge,
-             making it the single scroll container (the virtualizer scrolls
-             internally; the window does not scroll). -->
-        <div
-            ref="scrollEl"
-            class="mt-6 min-h-0 overflow-y-auto"
-            :style="{ height: panelHeight }"
-            @scroll="onScroll"
-        >
-            <div class="mx-auto w-full max-w-7xl px-6 pb-6">
+        <!-- Virtualized grid. The window is the single scroller; only the rows
+             near the viewport are in the DOM. The grid wrapper reports its
+             offset from the document top (scrollMargin) so virtual positions
+             line up with the real page scroll. -->
+        <div class="mt-6">
+            <div ref="gridEl" class="mx-auto w-full max-w-7xl px-6 pb-6">
                 <p v-if="loadedOnce && !loading && events.length === 0" class="py-16 text-center text-muted-foreground">
                     No events match your filters.
                 </p>
@@ -313,7 +313,7 @@ onBeforeUnmount(() => {
                         :data-index="vRow.index"
                         class="absolute left-0 top-0 grid w-full gap-5 px-1 pt-1"
                         :class="columns === 1 ? 'grid-cols-1' : columns === 2 ? 'grid-cols-2' : 'grid-cols-3'"
-                        :style="{ transform: `translateY(${vRow.start}px)`, paddingBottom: `${ROW_GAP}px` }"
+                        :style="{ transform: `translateY(${vRow.start - scrollMargin}px)`, paddingBottom: `${ROW_GAP}px` }"
                     >
                         <Card
                             v-for="event in rows[vRow.index]"
