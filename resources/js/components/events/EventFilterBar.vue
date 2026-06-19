@@ -1,4 +1,16 @@
 <script setup lang="ts">
+import { CalendarDays, MapPin, Search, SlidersHorizontal } from '@lucide/vue';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
 import type { EventFilters } from '@/composables/useEvents';
 
 defineProps<{
@@ -10,16 +22,8 @@ const form = defineModel<EventFilters>('form', { required: true });
 
 const emit = defineEmits<{ (e: 'apply'): void }>();
 
-// Open the native calendar when the date field is clicked (not just the icon).
-function openPicker(e: Event) {
-    const input = e.target as HTMLInputElement & { showPicker?: () => void };
-
-    try {
-        input.showPicker?.();
-    } catch {
-        // showPicker throws without a user gesture; ignore.
-    }
-}
+// shadcn Select can't bind to an empty-string value, so we map "" <-> "all".
+const ALL = 'all';
 </script>
 
 <template>
@@ -27,45 +31,46 @@ function openPicker(e: Event) {
         class="flex flex-wrap items-end gap-3 rounded-2xl border bg-card/60 p-4 shadow-sm backdrop-blur"
         @submit.prevent="emit('apply')"
     >
-        <div class="flex flex-col gap-1">
-            <label class="text-xs font-medium text-muted-foreground">Location</label>
-            <select v-model="form.city" class="h-9 min-w-45 rounded-md border border-input bg-background px-3 text-sm">
-                <option value="">All locations</option>
-                <option v-for="c in cities" :key="c" :value="c">{{ c }}</option>
-            </select>
+        <div class="flex flex-col gap-1.5">
+            <Label class="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <MapPin class="size-3.5" /> Location
+            </Label>
+            <Select
+                :model-value="form.city || ALL"
+                @update:model-value="(v) => (form.city = v === ALL ? '' : String(v))"
+            >
+                <SelectTrigger class="min-w-48">
+                    <SelectValue placeholder="All locations" />
+                </SelectTrigger>
+                <SelectContent>
+                    <SelectItem :value="ALL">All locations</SelectItem>
+                    <SelectItem v-for="c in cities" :key="c" :value="c">{{ c }}</SelectItem>
+                </SelectContent>
+            </Select>
         </div>
 
-        <div class="flex flex-col gap-1">
-            <label class="text-xs font-medium text-muted-foreground">From date</label>
-            <input
-                v-model="form.from"
-                type="date"
-                class="h-9 cursor-pointer rounded-md border border-input bg-background px-3 text-sm"
-                @click="openPicker"
-                @focus="openPicker"
-            />
+        <div class="flex flex-col gap-1.5">
+            <Label class="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <CalendarDays class="size-3.5" /> From date
+            </Label>
+            <Input v-model="form.from" type="date" class="w-40 cursor-pointer" />
         </div>
 
-        <div class="flex flex-col gap-1">
-            <label class="text-xs font-medium text-muted-foreground">To date</label>
-            <input
-                v-model="form.to"
-                type="date"
-                class="h-9 cursor-pointer rounded-md border border-input bg-background px-3 text-sm"
-                @click="openPicker"
-                @focus="openPicker"
-            />
+        <div class="flex flex-col gap-1.5">
+            <Label class="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <CalendarDays class="size-3.5" /> To date
+            </Label>
+            <Input v-model="form.to" type="date" class="w-40 cursor-pointer" />
         </div>
 
-        <button
-            type="submit"
-            class="h-9 rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground transition hover:opacity-90 active:scale-95"
-        >
+        <Button type="submit" class="active:scale-95">
+            <SlidersHorizontal class="size-4" />
             Apply
-        </button>
+        </Button>
 
-        <span v-if="total !== null" class="ml-auto self-center text-sm text-muted-foreground">
+        <Badge v-if="total !== null" variant="secondary" class="ml-auto gap-1.5 self-center px-3 py-1.5">
+            <Search class="size-3.5" />
             {{ total.toLocaleString() }} events
-        </span>
+        </Badge>
     </form>
 </template>

@@ -54,7 +54,7 @@ class EventSeeder extends Seeder
 
     public function run(): void
     {
-        $rows = (int) (env('SEED_ROWS', 200));
+        $rows = (int) (env('SEED_ROWS', 1_250_000));
 
         $this->command?->info("Seeding {$rows} events...");
 

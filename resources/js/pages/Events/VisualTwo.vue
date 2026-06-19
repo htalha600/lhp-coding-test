@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { Head } from '@inertiajs/vue3';
+import { CalendarDays, MapPin, Plus } from '@lucide/vue';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import CreateEventDialog from '@/components/events/CreateEventDialog.vue';
 import EventFilterBar from '@/components/events/EventFilterBar.vue';
 import RegisterDialog from '@/components/events/RegisterDialog.vue';
+import { Button } from '@/components/ui/button';
 import { useEvents } from '@/composables/useEvents';
 import type { EventCard, EventFilters } from '@/composables/useEvents';
 
@@ -153,12 +155,10 @@ onBeforeUnmount(() => {
                     <p class="text-sm font-medium uppercase tracking-wider text-primary">Visual 2</p>
                     <h1 class="text-2xl font-bold tracking-tight">Events Map</h1>
                 </div>
-                <button
-                    class="h-10 rounded-lg bg-primary px-5 text-sm font-semibold text-primary-foreground transition hover:opacity-90 active:scale-95"
-                    @click="showCreate = true"
-                >
-                    + Add event
-                </button>
+                <Button size="lg" class="active:scale-95" @click="showCreate = true">
+                    <Plus class="size-4" />
+                    Add event
+                </Button>
             </div>
             <EventFilterBar v-model:form="form" :cities="cities" :total="total" @apply="onApply" />
         </header>
@@ -189,8 +189,14 @@ onBeforeUnmount(() => {
                             />
                             <div class="min-w-0">
                                 <p class="truncate text-sm font-semibold">{{ event.title }}</p>
-                                <p class="truncate text-xs text-muted-foreground">📍 {{ event.location?.label }}</p>
-                                <p class="truncate text-xs text-muted-foreground">🗓 {{ formatDate(event.date_time) }}</p>
+                                <p class="flex items-center gap-1 truncate text-xs text-muted-foreground">
+                                    <MapPin class="size-3 shrink-0 text-primary" />
+                                    <span class="truncate">{{ event.location?.label }}</span>
+                                </p>
+                                <p class="flex items-center gap-1 truncate text-xs text-muted-foreground">
+                                    <CalendarDays class="size-3 shrink-0 text-primary" />
+                                    {{ formatDate(event.date_time) }}
+                                </p>
                             </div>
                         </div>
                     </li>

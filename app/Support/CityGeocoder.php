@@ -115,23 +115,13 @@ class CityGeocoder
      */
     public static function labelsForEvents(): array
     {
-        $rows = Event::query()
-            ->whereNotNull('latitude')
-            ->whereNotNull('longitude')
+        // Distinct labels in SQL — bounded to known cities, never the full table.
+        $result = Event::query()
+            ->whereNotNull('location_label')
             ->distinct()
-            ->get(['latitude', 'longitude', 'location_label']);
-
-        $found = [];
-        foreach ($rows as $row) {
-            // Prefer the cached, reverse-geocoded label; fall back to offline.
-            $label = $row->location_label ?: (self::nearest((float) $row->latitude, (float) $row->longitude)['label'] ?? null);
-            if ($label) {
-                $found[$label] = true;
-            }
-        }
-
-        $result = array_keys($found);
-        sort($result);
+            ->orderBy('location_label')
+            ->pluck('location_label')
+            ->all();
 
         return $result;
     }

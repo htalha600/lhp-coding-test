@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { Head } from '@inertiajs/vue3';
+import { CalendarDays, MapPin, Plus, Ticket } from '@lucide/vue';
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import CreateEventDialog from '@/components/events/CreateEventDialog.vue';
 import EventFilterBar from '@/components/events/EventFilterBar.vue';
 import RegisterDialog from '@/components/events/RegisterDialog.vue';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardFooter } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useEvents } from '@/composables/useEvents';
 import type { EventCard, EventFilters } from '@/composables/useEvents';
 
@@ -66,21 +70,19 @@ onBeforeUnmount(() => observer?.disconnect());
                     <h1 class="text-3xl font-bold tracking-tight">Browse Events</h1>
                     <p class="text-muted-foreground">A card grid of everything happening around the world.</p>
                 </div>
-                <button
-                    class="h-10 rounded-lg bg-primary px-5 text-sm font-semibold text-primary-foreground transition hover:opacity-90 active:scale-95"
-                    @click="showCreate = true"
-                >
-                    + Add event
-                </button>
+                <Button size="lg" class="active:scale-95" @click="showCreate = true">
+                    <Plus class="size-4" />
+                    Add event
+                </Button>
             </header>
 
             <EventFilterBar v-model:form="form" :cities="cities" :total="total" @apply="applyFilters" />
 
             <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                <article
+                <Card
                     v-for="(event, i) in events"
                     :key="event.id"
-                    class="group fade-in-up flex flex-col overflow-hidden rounded-2xl border bg-card shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl"
+                    class="group fade-in-up gap-0 overflow-hidden py-0 pb-4 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl"
                     :style="{ animationDelay: `${(i % 24) * 40}ms` }"
                 >
                     <div
@@ -103,31 +105,40 @@ onBeforeUnmount(() => observer?.disconnect());
                         </span>
                     </div>
 
-                    <div class="flex flex-1 flex-col gap-2 p-4">
-                        <h2 class="line-clamp-1 text-lg font-semibold">{{ event.title }}</h2>
+                    <CardContent class="flex flex-1 flex-col gap-2 px-4 pt-4">
+                        <h2 class="line-clamp-1 text-lg leading-none font-semibold">{{ event.title }}</h2>
                         <p class="line-clamp-2 text-sm text-muted-foreground">{{ event.description }}</p>
 
-                        <div class="mt-1 flex flex-col gap-1 text-sm">
+                        <div class="mt-1 flex flex-col gap-1.5 text-sm">
                             <span class="flex items-center gap-1.5 text-foreground/80">
-                                📍 {{ event.location?.label ?? 'Unknown location' }}
+                                <MapPin class="size-4 shrink-0 text-primary" />
+                                <span class="truncate">{{ event.location?.label ?? 'Unknown location' }}</span>
                             </span>
-                            <span class="flex items-center gap-1.5 text-foreground/80">🗓 {{ formatDate(event.date_time) }}</span>
+                            <span class="flex items-center gap-1.5 text-foreground/80">
+                                <CalendarDays class="size-4 shrink-0 text-primary" />
+                                {{ formatDate(event.date_time) }}
+                            </span>
                         </div>
+                    </CardContent>
 
-                        <div class="mt-auto flex justify-end pt-3">
-                            <button
-                                class="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition hover:opacity-90 active:scale-95"
-                                @click="selected = event"
-                            >
-                                Register
-                            </button>
-                        </div>
-                    </div>
-                </article>
+                    <CardFooter class="justify-end px-4 pt-3">
+                        <Button size="sm" class="active:scale-95" @click="selected = event">
+                            <Ticket class="size-4" />
+                            Register
+                        </Button>
+                    </CardFooter>
+                </Card>
             </div>
 
             <div v-if="loading" class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                <div v-for="n in 6" :key="n" class="h-72 animate-pulse rounded-2xl bg-muted" />
+                <div v-for="n in 6" :key="n" class="flex flex-col gap-3 rounded-xl border p-0">
+                    <Skeleton class="aspect-16/10 w-full rounded-b-none" />
+                    <div class="flex flex-col gap-2 p-4">
+                        <Skeleton class="h-5 w-2/3" />
+                        <Skeleton class="h-4 w-full" />
+                        <Skeleton class="h-4 w-1/2" />
+                    </div>
+                </div>
             </div>
 
             <p v-if="loadedOnce && !loading && events.length === 0" class="py-16 text-center text-muted-foreground">
