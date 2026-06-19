@@ -3,9 +3,6 @@ import { Head } from '@inertiajs/vue3';
 import { CalendarDays, MapPin, Plus } from '@lucide/vue';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import 'leaflet.markercluster';
-import 'leaflet.markercluster/dist/MarkerCluster.css';
-import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import CreateEventDialog from '@/components/events/CreateEventDialog.vue';
 import EventFilterBar from '@/components/events/EventFilterBar.vue';
@@ -22,6 +19,12 @@ interface MapMarker {
     date_time: string | null;
 }
 
+interface MapCluster {
+    latitude: number;
+    longitude: number;
+    count: number;
+}
+
 // Self-contained SVG pin so we don't depend on Leaflet's bundled PNG icons.
 const pinIcon = L.divIcon({
     className: 'event-pin',
@@ -33,6 +36,28 @@ const pinIcon = L.divIcon({
     iconAnchor: [13, 38],
     popupAnchor: [0, -34],
 });
+
+// A cluster bubble whose size + colour scale with the event count. The count is
+// formatted compactly (1.2k, 34k…) so even huge buckets stay legible.
+function clusterIcon(count: number): L.DivIcon {
+    const size = count < 100 ? 40 : count < 1000 ? 52 : count < 10000 ? 64 : 76;
+    const bg = count < 100 ? '#6366f1' : count < 1000 ? '#4f46e5' : count < 10000 ? '#4338ca' : '#3730a3';
+    const label =
+        count < 1000
+            ? String(count)
+            : count < 1_000_000
+              ? `${(count / 1000).toFixed(count < 10000 ? 1 : 0)}k`.replace('.0', '')
+              : `${(count / 1_000_000).toFixed(1)}M`.replace('.0', '');
+
+    return L.divIcon({
+        className: 'event-cluster',
+        html: `<div class="event-cluster__bubble" style="width:${size}px;height:${size}px;background:${bg}">
+            <span>${label}</span>
+        </div>`,
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2],
+    });
+}
 
 const props = defineProps<{
     filters: EventFilters;
@@ -55,7 +80,9 @@ const visible = ref<MapMarker[]>([]); // backs the reactive side list
 
 const mapEl = ref<HTMLElement | null>(null);
 let map: L.Map | null = null;
-let cluster: L.MarkerClusterGroup | null = null;
+// A single layer group holds both cluster bubbles and leaf pins; we clear and
+// repopulate it on every viewport change so the DOM never grows unbounded.
+let layer: L.LayerGroup | null = null;
 let markersById = new Map<string, MapMarker>();
 let debounce: ReturnType<typeof setTimeout> | null = null;
 
@@ -76,6 +103,7 @@ function buildParams(): URLSearchParams {
         params.set('south', String(b.getSouth()));
         params.set('east', String(b.getEast()));
         params.set('west', String(b.getWest()));
+        params.set('zoom', String(Math.round(map.getZoom())));
     }
 
     if (form.city) {
@@ -93,24 +121,45 @@ function buildParams(): URLSearchParams {
     return params;
 }
 
+// One bounded request per viewport change. The server returns aggregated
+// clusters (centroid + count) plus individual leaf markers for sparse cells, so
+// the number of objects we plot is small no matter how many events exist.
 async function fetchMarkers() {
-    if (!map || !cluster) {
+    if (!map || !layer) {
         return;
     }
 
     loading.value = true;
 
     try {
-        const res = await fetch(`/events/map-data?${buildParams()}`, {
+        const res = await fetch(`/events/map-clusters?${buildParams()}`, {
             headers: { Accept: 'application/json' },
         });
         const payload = await res.json();
+        const clusters: MapCluster[] = payload.clusters ?? [];
         const markers: MapMarker[] = payload.markers ?? [];
 
-        cluster.clearLayers();
+        layer.clearLayers();
         markersById = new Map();
 
-        const layers = markers.map((m) => {
+        // Cluster bubbles: clicking one zooms in, which makes the server split it
+        // into finer clusters (and eventually individual pins).
+        for (const c of clusters) {
+            const bubble = L.marker([c.latitude, c.longitude], {
+                icon: clusterIcon(c.count),
+            });
+            bubble.on('click', () => {
+                if (!map) {
+                    return;
+                }
+                const next = Math.min(map.getZoom() + 2, map.getMaxZoom());
+                map.flyTo([c.latitude, c.longitude], next, { duration: 0.4 });
+            });
+            layer.addLayer(bubble);
+        }
+
+        // Leaf pins: real events, clickable to register.
+        for (const m of markers) {
             markersById.set(m.id, m);
             const marker = L.marker([m.latitude, m.longitude], { icon: pinIcon });
             marker.bindPopup(
@@ -124,15 +173,14 @@ async function fetchMarkers() {
                     </button>
                 </div>`,
             );
+            layer.addLayer(marker);
+        }
 
-            return marker;
-        });
-
-        cluster.addLayers(layers);
         visible.value = markers;
-        inView.value = payload.returned ?? markers.length;
+        inView.value = markers.length;
         total.value = payload.total ?? null;
-        capped.value = Boolean(payload.capped);
+        // "Capped" now means there are still clustered events not shown as pins.
+        capped.value = clusters.length > 0;
     } finally {
         loading.value = false;
     }
@@ -143,7 +191,7 @@ function scheduleFetch() {
         clearTimeout(debounce);
     }
 
-    debounce = setTimeout(fetchMarkers, 300);
+    debounce = setTimeout(fetchMarkers, 250);
 }
 
 // The popup Register button opens the dialog. Markers carry only the light map
@@ -198,8 +246,8 @@ onMounted(() => {
         maxZoom: 18,
     }).addTo(map);
 
-    cluster = L.markerClusterGroup({ chunkedLoading: true, maxClusterRadius: 60 });
-    map.addLayer(cluster);
+    layer = L.layerGroup();
+    map.addLayer(layer);
 
     mapEl.value.addEventListener('click', onPopupClick);
     // Refetch whenever the user pans or zooms (debounced).
@@ -243,10 +291,14 @@ onBeforeUnmount(() => {
             <!-- Side list of markers currently in view -->
             <aside class="hidden w-80 shrink-0 overflow-y-auto border-l bg-card/60 md:block">
                 <div class="sticky top-0 border-b bg-card/90 p-3 text-sm font-medium backdrop-blur">
-                    {{ inView.toLocaleString() }} in view
-                    <span v-if="capped" class="text-muted-foreground"> · zoom in to see all</span>
+                    <template v-if="total !== null">{{ total.toLocaleString() }} in this area</template>
+                    <span v-if="capped" class="text-muted-foreground"> · zoom in to expand clusters</span>
+                    <span v-else-if="inView" class="text-muted-foreground"> · {{ inView.toLocaleString() }} shown</span>
                     <span v-if="loading" class="text-muted-foreground"> · loading…</span>
                 </div>
+                <p v-if="!visible.length && !loading" class="p-4 text-sm text-muted-foreground">
+                    {{ capped ? 'Zoom in or tap a cluster to reveal individual events.' : 'No events in this area.' }}
+                </p>
                 <ul>
                     <li
                         v-for="m in visible"
@@ -280,5 +332,39 @@ onBeforeUnmount(() => {
 .event-pin {
     background: transparent;
     border: none;
+}
+
+.event-cluster {
+    background: transparent;
+    border: none;
+}
+
+.event-cluster__bubble {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    color: #fff;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    box-shadow:
+        0 0 0 4px rgba(99, 102, 241, 0.25),
+        0 2px 8px rgba(0, 0, 0, 0.3);
+    cursor: pointer;
+    transition:
+        transform 0.15s ease,
+        box-shadow 0.15s ease;
+}
+
+.event-cluster__bubble span {
+    font-size: 13px;
+}
+
+.event-cluster__bubble:hover {
+    transform: scale(1.08);
+    box-shadow:
+        0 0 0 6px rgba(99, 102, 241, 0.3),
+        0 4px 12px rgba(0, 0, 0, 0.35);
 }
 </style>

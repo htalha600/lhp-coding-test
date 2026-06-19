@@ -34,12 +34,23 @@ export interface EventFilters {
     to?: string | null;
 }
 
+export interface UseEventsOptions {
+    /** Keep at most this many events in memory (sliding window). 0 = unbounded. */
+    maxItems?: number;
+}
+
 /**
- * Shared client-side data layer for the event pages: holds the filter form,
- * paginates against /events/data, and exposes loading state. Both Visual 1
- * and Visual 2 build their own UI on top of this.
+ * Shared client-side data layer for the event pages: holds the filter form and
+ * paginates against /events/data. When `maxItems` is set it keeps a BIDIRECTIONAL
+ * sliding window — a contiguous range of pages [pageLo..pageHi] is held in memory.
+ * Scrolling down loads the next page and trims the oldest; scrolling up loads the
+ * previous page and trims the newest. Memory stays bounded and scroll works both
+ * ways. `droppedCount` (front trims) and `prependedCount` (front inserts) let the
+ * UI compensate scroll position so trimming/prepending is invisible.
  */
-export function useEvents(initial: EventFilters = {}) {
+export function useEvents(initial: EventFilters = {}, options: UseEventsOptions = {}) {
+    const maxItems = options.maxItems ?? 0;
+
     const form = reactive<EventFilters>({
         city: initial.city ?? '',
         from: initial.from ?? '',
@@ -47,18 +58,29 @@ export function useEvents(initial: EventFilters = {}) {
     });
 
     const events = ref<EventCard[]>([]);
-    const page = ref(0);
-    const lastPage = ref<number | null>(null);
-    const total = ref<number | null>(null);
+    const total = ref<number | null>(null); // total matching rows (whole DB)
+    const totalPages = ref<number | null>(null); // last page number from the API
     const loading = ref(false);
     const loadedOnce = ref(false);
 
+    // The contiguous page range currently held in memory. 0 = nothing loaded.
+    const pageLo = ref(0);
+    const pageHi = ref(0);
+
+    // Net events trimmed off / inserted at the FRONT, for scroll compensation.
+    const droppedCount = ref(0);
+    const prependedCount = ref(0);
+
     function hasMore() {
-        return lastPage.value === null || page.value < lastPage.value;
+        return totalPages.value === null || pageHi.value < totalPages.value;
     }
 
-    function buildParams(nextPage: number): URLSearchParams {
-        const params = new URLSearchParams({ page: String(nextPage) });
+    function hasPrev() {
+        return pageLo.value > 1;
+    }
+
+    function buildParams(targetPage: number): URLSearchParams {
+        const params = new URLSearchParams({ page: String(targetPage) });
 
         if (form.city) {
             params.set('city', form.city);
@@ -75,25 +97,78 @@ export function useEvents(initial: EventFilters = {}) {
         return params;
     }
 
+    async function fetchPage(targetPage: number): Promise<EventCard[]> {
+        const res = await fetch(`/events/data?${buildParams(targetPage)}`, {
+            headers: { Accept: 'application/json' },
+        });
+        const payload = await res.json();
+
+        total.value = payload.total;
+        totalPages.value = payload.last_page;
+        loadedOnce.value = true;
+
+        return payload.data as EventCard[];
+    }
+
+    /** Load the next page (append), trimming the oldest page if over the cap. */
     async function loadMore() {
         if (loading.value || !hasMore()) {
-return;
-}
+            return;
+        }
 
         loading.value = true;
 
         try {
-            const res = await fetch(`/events/data?${buildParams(page.value + 1)}`, {
-                headers: { Accept: 'application/json' },
-            });
-            const payload = await res.json();
-            const rows: EventCard[] = payload.data;
+            const next = pageHi.value + 1;
+            const rows = await fetchPage(next);
 
             events.value.push(...rows);
-            page.value = payload.current_page;
-            lastPage.value = payload.last_page;
-            total.value = payload.total;
-            loadedOnce.value = true;
+            pageHi.value = next;
+
+            if (pageLo.value === 0) {
+                pageLo.value = next;
+            }
+
+            // Trim the oldest page off the front when over the cap.
+            if (maxItems > 0 && events.value.length > maxItems && pageHi.value > pageLo.value) {
+                const drop = events.value.length - maxItems;
+
+                if (drop > 0) {
+                    events.value.splice(0, drop);
+                    droppedCount.value += drop;
+                    pageLo.value += 1;
+                }
+            }
+        } finally {
+            loading.value = false;
+        }
+    }
+
+    /** Load the previous page (prepend), trimming the newest page if over the cap. */
+    async function loadPrev() {
+        if (loading.value || !hasPrev()) {
+            return;
+        }
+
+        loading.value = true;
+
+        try {
+            const prev = pageLo.value - 1;
+            const rows = await fetchPage(prev);
+
+            events.value.unshift(...rows);
+            prependedCount.value += rows.length;
+            pageLo.value = prev;
+
+            // Trim the newest page off the back when over the cap.
+            if (maxItems > 0 && events.value.length > maxItems && pageHi.value > pageLo.value) {
+                const drop = events.value.length - maxItems;
+
+                if (drop > 0) {
+                    events.value.splice(events.value.length - drop, drop);
+                    pageHi.value -= 1;
+                }
+            }
         } finally {
             loading.value = false;
         }
@@ -101,10 +176,13 @@ return;
 
     function reset() {
         events.value = [];
-        page.value = 0;
-        lastPage.value = null;
+        pageLo.value = 0;
+        pageHi.value = 0;
         total.value = null;
+        totalPages.value = null;
         loadedOnce.value = false;
+        droppedCount.value = 0;
+        prependedCount.value = 0;
     }
 
     async function applyFilters() {
@@ -112,5 +190,20 @@ return;
         await loadMore();
     }
 
-    return { form, events, page, lastPage, total, loading, loadedOnce, hasMore, loadMore, applyFilters, reset };
+    return {
+        form,
+        events,
+        total,
+        loading,
+        loadedOnce,
+        droppedCount,
+        prependedCount,
+        pageLo,
+        hasMore,
+        hasPrev,
+        loadMore,
+        loadPrev,
+        applyFilters,
+        reset,
+    };
 }
