@@ -6,6 +6,7 @@ use App\Http\Requests\StoreEventRequest;
 use App\Models\Event;
 use App\Support\CityGeocoder;
 use App\Support\Geocoder;
+use Illuminate\Contracts\Database\Eloquent\Builder;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -55,6 +56,62 @@ class EventController extends Controller
         ]);
     }
 
+    /**
+     * Lightweight markers within the current map viewport (bounding box),
+     * capped so the browser never receives more than it can plot. Reuses the
+     * same date/location filters as the listing.
+     */
+    public function mapData(Request $request): JsonResponse
+    {
+        $cap = 2000;
+
+        $query = Event::query()
+            ->whereNotNull('latitude')
+            ->whereNotNull('longitude');
+
+        $this->applyFilters($query, $request);
+
+        // Restrict to the visible map bounds when provided.
+        if ($request->filled(['north', 'south', 'east', 'west'])) {
+            $north = (float) $request->input('north');
+            $south = (float) $request->input('south');
+            $east = (float) $request->input('east');
+            $west = (float) $request->input('west');
+
+            $query->whereBetween('latitude', [min($south, $north), max($south, $north)]);
+
+            // Handle a viewport that crosses the antimeridian (west > east).
+            if ($west <= $east) {
+                $query->whereBetween('longitude', [$west, $east]);
+            } else {
+                $query->where(fn ($q) => $q->where('longitude', '>=', $west)->orWhere('longitude', '<=', $east));
+            }
+        }
+
+        $total = (clone $query)->count();
+
+        $markers = $query
+            ->limit($cap)
+            ->get(['id', 'latitude', 'longitude', 'location_label', 'event_time', 'payload'])
+            ->map(fn (Event $e) => [
+                'id' => $e->id,
+                'latitude' => $e->latitude,
+                'longitude' => $e->longitude,
+                'title' => $e->title(),
+                'type' => $e->type(),
+                'price' => $e->price(),
+                'location' => $e->location(),
+                'date_time' => $e->dateTime()?->toIso8601String(),
+            ]);
+
+        return response()->json([
+            'markers' => $markers,
+            'returned' => $markers->count(),
+            'total' => $total,
+            'capped' => $total > $cap,
+        ]);
+    }
+
     public function store(StoreEventRequest $request): RedirectResponse
     {
         $data = $request->validated();
@@ -65,12 +122,18 @@ class EventController extends Controller
             'latitude' => $data['latitude'],
             'longitude' => $data['longitude'],
             'location_label' => Geocoder::resolve((float) $data['latitude'], (float) $data['longitude']),
-            'payload' => [
+            'payload' => array_filter([
                 'name' => $data['title'],
                 'description' => $data['description'] ?? '',
+                'type' => $data['type'] ?? null,
+                'status' => $data['status'] ?? 'published',
+                'organizer' => $data['organizer'] ?? null,
+                'venue' => $data['venue'] ?? null,
+                'capacity' => isset($data['capacity']) ? (int) $data['capacity'] : null,
+                'price' => isset($data['price']) ? (float) $data['price'] : null,
                 'lat' => (string) $data['latitude'],
                 'lng' => (string) $data['longitude'],
-            ],
+            ], fn ($v) => $v !== null),
         ]);
 
         $this->storeImages($event, $request);
@@ -126,15 +189,9 @@ class EventController extends Controller
         ];
     }
 
-    /**
-     * @return array{0: LengthAwarePaginator, 1: array{ms: int, bytes: int}}
-     */
-    private function loadListing(Request $request): array
+    /** Apply the shared date + location filters to an event query. */
+    private function applyFilters(Builder $query, Request $request): void
     {
-        $start = microtime(true);
-
-        $query = Event::with('images');
-
         // Filter by date against the indexed event_time column.
         if ($from = $request->input('from')) {
             $query->where('event_time', '>=', Carbon::parse($from)->startOfDay()->timestamp);
@@ -156,6 +213,17 @@ class EventController extends Controller
                 }
             });
         }
+    }
+
+    /**
+     * @return array{0: LengthAwarePaginator, 1: array{ms: int, bytes: int}}
+     */
+    private function loadListing(Request $request): array
+    {
+        $start = microtime(true);
+
+        $query = Event::with('images');
+        $this->applyFilters($query, $request);
 
         // Newest-added events first.
         $events = $query->latest('created_at')->latest('id')->paginate(24)->withQueryString();

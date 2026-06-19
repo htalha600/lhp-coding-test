@@ -9,10 +9,19 @@ const emit = defineEmits<{ (e: 'close'): void; (e: 'created'): void }>();
 const defaults = () => ({
     title: '',
     description: '',
+    type: '',
+    status: 'published',
+    organizer: '',
+    venue: '',
+    capacity: '',
+    price: '',
     date_time: '',
     latitude: '',
     longitude: '',
 });
+
+const TYPES = ['concert', 'conference', 'meetup', 'workshop', 'festival', 'sports', 'networking', 'exhibition'];
+const STATUSES = ['draft', 'published', 'cancelled', 'sold_out'];
 
 const MAX_IMAGES = 3;
 
@@ -124,6 +133,47 @@ function submit() {
                         <label class="text-sm font-medium">Description</label>
                         <textarea v-model="form.description" rows="3" class="rounded-md border border-input bg-background px-3 py-2 text-sm" />
                         <span v-if="errors.description" class="text-xs text-red-500">{{ errors.description }}</span>
+                    </div>
+
+                    <div class="flex flex-col gap-1">
+                        <label class="text-sm font-medium">Type</label>
+                        <select v-model="form.type" class="h-9 rounded-md border border-input bg-background px-3 text-sm">
+                            <option value="">Select type</option>
+                            <option v-for="t in TYPES" :key="t" :value="t" class="capitalize">{{ t }}</option>
+                        </select>
+                        <span v-if="errors.type" class="text-xs text-red-500">{{ errors.type }}</span>
+                    </div>
+
+                    <div class="flex flex-col gap-1">
+                        <label class="text-sm font-medium">Status</label>
+                        <select v-model="form.status" class="h-9 rounded-md border border-input bg-background px-3 text-sm">
+                            <option v-for="s in STATUSES" :key="s" :value="s">{{ s.replace('_', ' ') }}</option>
+                        </select>
+                        <span v-if="errors.status" class="text-xs text-red-500">{{ errors.status }}</span>
+                    </div>
+
+                    <div class="flex flex-col gap-1">
+                        <label class="text-sm font-medium">Organizer</label>
+                        <input v-model="form.organizer" type="text" class="h-9 rounded-md border border-input bg-background px-3 text-sm" />
+                        <span v-if="errors.organizer" class="text-xs text-red-500">{{ errors.organizer }}</span>
+                    </div>
+
+                    <div class="flex flex-col gap-1">
+                        <label class="text-sm font-medium">Venue</label>
+                        <input v-model="form.venue" type="text" class="h-9 rounded-md border border-input bg-background px-3 text-sm" />
+                        <span v-if="errors.venue" class="text-xs text-red-500">{{ errors.venue }}</span>
+                    </div>
+
+                    <div class="flex flex-col gap-1">
+                        <label class="text-sm font-medium">Capacity</label>
+                        <input v-model="form.capacity" type="number" min="0" placeholder="e.g. 500" class="h-9 rounded-md border border-input bg-background px-3 text-sm" />
+                        <span v-if="errors.capacity" class="text-xs text-red-500">{{ errors.capacity }}</span>
+                    </div>
+
+                    <div class="flex flex-col gap-1">
+                        <label class="text-sm font-medium">Price (USD)</label>
+                        <input v-model="form.price" type="number" step="0.01" min="0" placeholder="0 = free" class="h-9 rounded-md border border-input bg-background px-3 text-sm" />
+                        <span v-if="errors.price" class="text-xs text-red-500">{{ errors.price }}</span>
                     </div>
 
                     <div class="flex flex-col gap-1 sm:col-span-2">

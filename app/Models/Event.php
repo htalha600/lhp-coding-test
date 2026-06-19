@@ -14,6 +14,10 @@ class Event extends Model
 {
     use HasFactory, HasUuids;
 
+    public const TYPES = ['concert', 'conference', 'meetup', 'workshop', 'festival', 'sports', 'networking', 'exhibition'];
+
+    public const STATUSES = ['draft', 'published', 'cancelled', 'sold_out'];
+
     protected $guarded = [];
 
     protected $casts = [
@@ -49,6 +53,36 @@ class Event extends Model
         return $this->payload['description'] ?? '';
     }
 
+    public function type(): ?string
+    {
+        return $this->payload['type'] ?? null;
+    }
+
+    public function status(): ?string
+    {
+        return $this->payload['status'] ?? null;
+    }
+
+    public function organizer(): ?string
+    {
+        return $this->payload['organizer'] ?? null;
+    }
+
+    public function venue(): ?string
+    {
+        return $this->payload['venue'] ?? null;
+    }
+
+    public function capacity(): ?int
+    {
+        return isset($this->payload['capacity']) ? (int) $this->payload['capacity'] : null;
+    }
+
+    public function price(): ?float
+    {
+        return isset($this->payload['price']) ? (float) $this->payload['price'] : null;
+    }
+
     /** The event date/time, stored as a unix timestamp (UTC). */
     public function dateTime(): ?Carbon
     {
@@ -78,6 +112,12 @@ class Event extends Model
             'id' => $this->id,
             'title' => $this->title(),
             'description' => $this->description(),
+            'type' => $this->type(),
+            'status' => $this->status(),
+            'organizer' => $this->organizer(),
+            'venue' => $this->venue(),
+            'capacity' => $this->capacity(),
+            'price' => $this->price(),
             'date_time' => $this->dateTime()?->toIso8601String(),
             'latitude' => $this->latitude,
             'longitude' => $this->longitude,

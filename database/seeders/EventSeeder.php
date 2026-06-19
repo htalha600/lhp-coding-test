@@ -13,6 +13,16 @@ class EventSeeder extends Seeder
     /** Local placeholder images attached to every seeded event. */
     private const PLACEHOLDER_IMAGES = ['placeholder', 'placeholder-2'];
 
+    private const TYPES = ['concert', 'conference', 'meetup', 'workshop', 'festival', 'sports', 'networking', 'exhibition'];
+
+    private const STATUSES = ['draft', 'published', 'cancelled', 'sold_out'];
+
+    private const VENUE_PREFIX = ['The Grand', 'Riverside', 'Downtown', 'Skyline', 'Harbor', 'Old Town', 'Central', 'Sunset'];
+
+    private const VENUE_SUFFIX = ['Hall', 'Arena', 'Pavilion', 'Gardens', 'Warehouse', 'Theatre', 'Rooftop', 'Stadium'];
+
+    private const PRICES = [0, 0, 0, 15, 25, 49.99, 75, 120, 250];
+
     private const NAME_ADJECTIVES = ['Annual', 'Global', 'Summer', 'Winter', 'Underground', 'Open', 'International', 'Live', 'Midnight', 'Sunset', 'Urban', 'Indie', 'Grand', 'Pop-up', 'Virtual'];
 
     private const NAME_THEMES = ['Synthwave', 'Founders', 'Jazz', 'Tech', 'Food & Wine', 'Yoga', 'Startup', 'Design', 'Climate', 'Gaming', 'Film', 'Book', 'Marathon', 'Comedy', 'Art'];
@@ -102,6 +112,9 @@ class EventSeeder extends Seeder
                     .' '.self::NAME_THEMES[array_rand(self::NAME_THEMES)]
                     .' '.self::NAME_FORMATS[array_rand(self::NAME_FORMATS)];
 
+                $type = self::TYPES[array_rand(self::TYPES)];
+                $venue = self::VENUE_PREFIX[array_rand(self::VENUE_PREFIX)].' '.self::VENUE_SUFFIX[array_rand(self::VENUE_SUFFIX)];
+
                 $id = $this->uuidv4();
 
                 $batch[] = [
@@ -112,7 +125,13 @@ class EventSeeder extends Seeder
                     'location_label' => CityGeocoder::nearest($latitude, $longitude)['label'] ?? null,
                     'payload' => json_encode([
                         'name' => $name,
-                        'description' => "Join us for {$name} — an event you won't want to miss.",
+                        'description' => "Join us for {$name} — a {$type} you won't want to miss.",
+                        'type' => $type,
+                        'status' => self::STATUSES[array_rand(self::STATUSES)],
+                        'organizer' => 'Organizer '.mt_rand(1, 9999),
+                        'venue' => $venue,
+                        'capacity' => mt_rand(20, 50000),
+                        'price' => self::PRICES[array_rand(self::PRICES)],
                         'lat' => (string) $latitude,
                         'lng' => (string) $longitude,
                     ]),

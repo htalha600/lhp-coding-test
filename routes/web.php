@@ -8,6 +8,7 @@ Route::redirect('/', '/events')->name('home');
 
 Route::get('events', [EventController::class, 'index'])->name('events.index');
 Route::get('events/data', [EventController::class, 'data'])->name('events.data');
+Route::get('events/map-data', [EventController::class, 'mapData'])->name('events.map-data');
 Route::post('events', [EventController::class, 'store'])->name('events.store');
 
 Route::get('events-visual-1', [EventController::class, 'visualOne'])->name('events.visual1');

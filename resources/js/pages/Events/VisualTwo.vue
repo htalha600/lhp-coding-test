@@ -3,16 +3,26 @@ import { Head } from '@inertiajs/vue3';
 import { CalendarDays, MapPin, Plus } from '@lucide/vue';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import 'leaflet.markercluster';
+import 'leaflet.markercluster/dist/MarkerCluster.css';
+import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import CreateEventDialog from '@/components/events/CreateEventDialog.vue';
 import EventFilterBar from '@/components/events/EventFilterBar.vue';
 import RegisterDialog from '@/components/events/RegisterDialog.vue';
 import { Button } from '@/components/ui/button';
-import { useEvents } from '@/composables/useEvents';
 import type { EventCard, EventFilters } from '@/composables/useEvents';
 
-// Self-contained SVG pin so we don't depend on Leaflet's bundled PNG icons
-// (which can fail to resolve and render as broken images).
+interface MapMarker {
+    id: string;
+    latitude: number;
+    longitude: number;
+    title: string;
+    location: { label: string } | null;
+    date_time: string | null;
+}
+
+// Self-contained SVG pin so we don't depend on Leaflet's bundled PNG icons.
 const pinIcon = L.divIcon({
     className: 'event-pin',
     html: `<svg width="26" height="38" viewBox="0 0 26 38" xmlns="http://www.w3.org/2000/svg">
@@ -29,117 +39,180 @@ const props = defineProps<{
     cities: string[];
 }>();
 
-const { form, events, total, loading, hasMore, loadMore, applyFilters } = useEvents(props.filters);
+const form = reactive<EventFilters>({
+    city: props.filters.city ?? '',
+    from: props.filters.from ?? '',
+    to: props.filters.to ?? '',
+});
 
 const selected = ref<EventCard | null>(null);
 const showCreate = ref(false);
+const loading = ref(false);
+const total = ref<number | null>(null); // total matching current filters (whole DB)
+const inView = ref(0); // markers in the current viewport
+const capped = ref(false);
+const visible = ref<MapMarker[]>([]); // backs the reactive side list
+
 const mapEl = ref<HTMLElement | null>(null);
 let map: L.Map | null = null;
-let markerLayer: L.LayerGroup | null = null;
-// Fit the view to markers only on the first render / after a filter change,
-// never on incremental loads — otherwise the user's zoom keeps getting reset.
-let shouldFit = true;
+let cluster: L.MarkerClusterGroup | null = null;
+let markersById = new Map<string, MapMarker>();
+let debounce: ReturnType<typeof setTimeout> | null = null;
 
 function formatDate(iso: string | null): string {
     if (!iso) {
-return 'Date TBA';
-}
+        return 'Date TBA';
+    }
 
     return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-function renderMarkers() {
-    if (!map || !markerLayer) {
-return;
-}
+function buildParams(): URLSearchParams {
+    const params = new URLSearchParams();
 
-    markerLayer.clearLayers();
-    const points: L.LatLngExpression[] = [];
-
-    for (const event of events.value) {
-        if (event.latitude == null || event.longitude == null) {
-continue;
-}
-
-        const marker = L.marker([event.latitude, event.longitude], { icon: pinIcon });
-        marker.bindPopup(
-            `<div style="min-width:180px">
-                <strong>${event.title}</strong><br/>
-                <span style="color:#666">${event.location?.label ?? ''}</span><br/>
-                <span style="color:#666">${formatDate(event.date_time)}</span><br/>
-                <button data-event="${event.id}" class="map-register"
-                    style="margin-top:6px;padding:4px 10px;border-radius:6px;background:#6366f1;color:#fff;border:none;cursor:pointer">
-                    Register
-                </button>
-            </div>`,
-        );
-        marker.addTo(markerLayer);
-        points.push([event.latitude, event.longitude]);
+    if (map) {
+        const b = map.getBounds();
+        params.set('north', String(b.getNorth()));
+        params.set('south', String(b.getSouth()));
+        params.set('east', String(b.getEast()));
+        params.set('west', String(b.getWest()));
     }
 
-    // Only auto-fit once (initial load / after filtering); never on incremental
-    // page loads, so the user's manual zoom/pan is preserved.
-    if (points.length && shouldFit) {
-        map.fitBounds(L.latLngBounds(points), { padding: [40, 40], maxZoom: 6 });
-        shouldFit = false;
+    if (form.city) {
+        params.set('city', form.city);
+    }
+
+    if (form.from) {
+        params.set('from', form.from);
+    }
+
+    if (form.to) {
+        params.set('to', form.to);
+    }
+
+    return params;
+}
+
+async function fetchMarkers() {
+    if (!map || !cluster) {
+        return;
+    }
+
+    loading.value = true;
+
+    try {
+        const res = await fetch(`/events/map-data?${buildParams()}`, {
+            headers: { Accept: 'application/json' },
+        });
+        const payload = await res.json();
+        const markers: MapMarker[] = payload.markers ?? [];
+
+        cluster.clearLayers();
+        markersById = new Map();
+
+        const layers = markers.map((m) => {
+            markersById.set(m.id, m);
+            const marker = L.marker([m.latitude, m.longitude], { icon: pinIcon });
+            marker.bindPopup(
+                `<div style="min-width:180px">
+                    <strong>${m.title}</strong><br/>
+                    <span style="color:#666">${m.location?.label ?? ''}</span><br/>
+                    <span style="color:#666">${formatDate(m.date_time)}</span><br/>
+                    <button data-event="${m.id}" class="map-register"
+                        style="margin-top:6px;padding:4px 10px;border-radius:6px;background:#6366f1;color:#fff;border:none;cursor:pointer">
+                        Register
+                    </button>
+                </div>`,
+            );
+
+            return marker;
+        });
+
+        cluster.addLayers(layers);
+        visible.value = markers;
+        inView.value = payload.returned ?? markers.length;
+        total.value = payload.total ?? null;
+        capped.value = Boolean(payload.capped);
+    } finally {
+        loading.value = false;
     }
 }
 
-// Open the register dialog when a popup's button is clicked.
+function scheduleFetch() {
+    if (debounce) {
+        clearTimeout(debounce);
+    }
+
+    debounce = setTimeout(fetchMarkers, 300);
+}
+
+// The popup Register button opens the dialog. Markers carry only the light map
+// payload, so we hand the dialog a minimal EventCard built from it.
 function onPopupClick(e: Event) {
     const target = e.target as HTMLElement;
 
     if (target.classList.contains('map-register')) {
         const id = target.getAttribute('data-event');
-        const event = events.value.find((ev) => ev.id === id);
+        const m = id ? markersById.get(id) : null;
 
-        if (event) {
-selected.value = event;
-}
+        if (m) {
+            selected.value = {
+                id: m.id,
+                title: m.title,
+                description: '',
+                date_time: m.date_time,
+                latitude: m.latitude,
+                longitude: m.longitude,
+                location: m.location ? { city: '', country: '', label: m.location.label } : null,
+                images: [],
+            };
+        }
     }
 }
 
-watch(events, renderMarkers, { deep: true });
-
-async function loadAllForMap() {
-    // Pull a few pages so the map has a useful spread of pins.
-    for (let i = 0; i < 4 && hasMore(); i++) {
-        await loadMore();
+function onApply() {
+    // Filters changed — refetch the current viewport immediately.
+    if (debounce) {
+        clearTimeout(debounce);
     }
+
+    fetchMarkers();
 }
 
-async function onApply() {
-    shouldFit = true; // re-frame the map to the new result set
-    await applyFilters();
-    await loadAllForMap();
-}
-
-onMounted(async () => {
+onMounted(() => {
     if (!mapEl.value) {
-return;
-}
+        return;
+    }
 
     map = L.map(mapEl.value, {
         worldCopyJump: true,
         scrollWheelZoom: true,
-        // Snappy mouse-wheel / trackpad zoom: small px-per-level means each
-        // scroll/pinch covers more zoom, fired with little debounce.
         zoomSnap: 0,
         zoomDelta: 1,
         wheelPxPerZoomLevel: 30,
         wheelDebounceTime: 5,
     }).setView([30, 0], 2);
+
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap contributors',
         maxZoom: 18,
     }).addTo(map);
-    markerLayer = L.layerGroup().addTo(map);
-    mapEl.value.addEventListener('click', onPopupClick);
 
-    await loadAllForMap();
+    cluster = L.markerClusterGroup({ chunkedLoading: true, maxClusterRadius: 60 });
+    map.addLayer(cluster);
+
+    mapEl.value.addEventListener('click', onPopupClick);
+    // Refetch whenever the user pans or zooms (debounced).
+    map.on('moveend', scheduleFetch);
+
+    fetchMarkers();
 });
 
 onBeforeUnmount(() => {
+    if (debounce) {
+        clearTimeout(debounce);
+    }
+
     mapEl.value?.removeEventListener('click', onPopupClick);
     map?.remove();
 });
@@ -167,37 +240,30 @@ onBeforeUnmount(() => {
             <!-- Map -->
             <div ref="mapEl" class="z-0 h-full flex-1" />
 
-            <!-- Side list of currently loaded events -->
+            <!-- Side list of markers currently in view -->
             <aside class="hidden w-80 shrink-0 overflow-y-auto border-l bg-card/60 md:block">
                 <div class="sticky top-0 border-b bg-card/90 p-3 text-sm font-medium backdrop-blur">
-                    {{ events.length }} events on the map
+                    {{ inView.toLocaleString() }} in view
+                    <span v-if="capped" class="text-muted-foreground"> · zoom in to see all</span>
                     <span v-if="loading" class="text-muted-foreground"> · loading…</span>
                 </div>
                 <ul>
                     <li
-                        v-for="event in events"
-                        :key="event.id"
+                        v-for="m in visible"
+                        :key="m.id"
                         class="cursor-pointer border-b p-3 transition hover:bg-accent"
-                        @click="selected = event"
+                        @click="map?.setView([m.latitude, m.longitude], Math.max(map.getZoom(), 10))"
                     >
-                        <div class="flex gap-3">
-                            <img
-                                v-if="event.images.length"
-                                :src="event.images[0].url"
-                                :alt="event.title"
-                                class="h-14 w-14 shrink-0 rounded-md object-cover"
-                            />
-                            <div class="min-w-0">
-                                <p class="truncate text-sm font-semibold">{{ event.title }}</p>
-                                <p class="flex items-center gap-1 truncate text-xs text-muted-foreground">
-                                    <MapPin class="size-3 shrink-0 text-primary" />
-                                    <span class="truncate">{{ event.location?.label }}</span>
-                                </p>
-                                <p class="flex items-center gap-1 truncate text-xs text-muted-foreground">
-                                    <CalendarDays class="size-3 shrink-0 text-primary" />
-                                    {{ formatDate(event.date_time) }}
-                                </p>
-                            </div>
+                        <div class="min-w-0">
+                            <p class="truncate text-sm font-semibold">{{ m.title }}</p>
+                            <p class="flex items-center gap-1 truncate text-xs text-muted-foreground">
+                                <MapPin class="size-3 shrink-0 text-primary" />
+                                <span class="truncate">{{ m.location?.label }}</span>
+                            </p>
+                            <p class="flex items-center gap-1 truncate text-xs text-muted-foreground">
+                                <CalendarDays class="size-3 shrink-0 text-primary" />
+                                {{ formatDate(m.date_time) }}
+                            </p>
                         </div>
                     </li>
                 </ul>

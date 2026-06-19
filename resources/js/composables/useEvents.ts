@@ -15,6 +15,12 @@ export interface EventCard {
     id: string;
     title: string;
     description: string;
+    type: string | null;
+    status: string | null;
+    organizer: string | null;
+    venue: string | null;
+    capacity: number | null;
+    price: number | null;
     date_time: string | null;
     latitude: number | null;
     longitude: number | null;

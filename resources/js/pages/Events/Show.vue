@@ -2,6 +2,7 @@
 import { Head, Link, usePage } from '@inertiajs/vue3';
 import { computed, ref } from 'vue';
 import RegisterDialog from '@/components/events/RegisterDialog.vue';
+import { Badge } from '@/components/ui/badge';
 import type { EventCard } from '@/composables/useEvents';
 
 interface EventDetail extends EventCard {
@@ -29,6 +30,14 @@ return 'Date TBA';
         minute: '2-digit',
         timeZoneName: 'short',
     });
+}
+
+function formatPrice(price: number | null): string {
+    if (price === null) {
+        return '';
+    }
+
+    return price === 0 ? 'Free' : `$${price.toFixed(2)}`;
 }
 </script>
 
@@ -66,6 +75,12 @@ return 'Date TBA';
         </div>
 
         <div class="flex flex-col gap-3">
+            <div class="flex flex-wrap items-center gap-2">
+                <Badge v-if="event.type" class="capitalize">{{ event.type }}</Badge>
+                <Badge v-if="event.status" variant="secondary" class="capitalize">{{ event.status.replace('_', ' ') }}</Badge>
+                <Badge v-if="event.price !== null" variant="outline">{{ formatPrice(event.price) }}</Badge>
+            </div>
+
             <h1 class="text-3xl font-bold tracking-tight">{{ event.title }}</h1>
             <p class="text-muted-foreground">{{ event.description }}</p>
 
@@ -77,6 +92,18 @@ return 'Date TBA';
                 <div class="rounded-xl border p-4">
                     <dt class="text-xs uppercase text-muted-foreground">Where</dt>
                     <dd class="mt-1 font-medium">{{ event.location?.label ?? 'Unknown' }}</dd>
+                </div>
+                <div v-if="event.venue" class="rounded-xl border p-4">
+                    <dt class="text-xs uppercase text-muted-foreground">Venue</dt>
+                    <dd class="mt-1 font-medium">{{ event.venue }}</dd>
+                </div>
+                <div v-if="event.organizer" class="rounded-xl border p-4">
+                    <dt class="text-xs uppercase text-muted-foreground">Organizer</dt>
+                    <dd class="mt-1 font-medium">{{ event.organizer }}</dd>
+                </div>
+                <div v-if="event.capacity !== null" class="rounded-xl border p-4">
+                    <dt class="text-xs uppercase text-muted-foreground">Capacity</dt>
+                    <dd class="mt-1 font-medium">{{ event.capacity.toLocaleString() }}</dd>
                 </div>
                 <div class="rounded-xl border p-4 sm:col-span-2">
                     <dt class="text-xs uppercase text-muted-foreground">Attendees</dt>

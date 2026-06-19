@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { Head } from '@inertiajs/vue3';
-import { CalendarDays, MapPin, Plus, Ticket } from '@lucide/vue';
+import { Building2, CalendarDays, MapPin, Plus, Ticket } from '@lucide/vue';
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import CreateEventDialog from '@/components/events/CreateEventDialog.vue';
 import EventFilterBar from '@/components/events/EventFilterBar.vue';
 import RegisterDialog from '@/components/events/RegisterDialog.vue';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -28,6 +29,14 @@ let observer: IntersectionObserver | null = null;
 const activeImage = ref<Record<string, number>>({});
 function cycleImage(id: string, count: number) {
     activeImage.value[id] = ((activeImage.value[id] ?? 0) + 1) % count;
+}
+
+function formatPrice(price: number | null): string {
+    if (price === null) {
+        return '';
+    }
+
+    return price === 0 ? 'Free' : `$${price.toFixed(2)}`;
 }
 
 function formatDate(iso: string | null): string {
@@ -95,6 +104,23 @@ onBeforeUnmount(() => observer?.disconnect());
                             :alt="event.images[activeImage[event.id] ?? 0].alt ?? event.title"
                             class="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
                         />
+                        <div class="absolute left-3 top-3 flex flex-wrap gap-1.5">
+                            <Badge v-if="event.type" class="capitalize shadow-sm">{{ event.type }}</Badge>
+                            <Badge
+                                v-if="event.status && event.status !== 'published'"
+                                variant="secondary"
+                                class="capitalize shadow-sm"
+                            >
+                                {{ event.status.replace('_', ' ') }}
+                            </Badge>
+                        </div>
+                        <Badge
+                            v-if="event.price !== null"
+                            variant="secondary"
+                            class="absolute right-3 top-3 shadow-sm"
+                        >
+                            {{ formatPrice(event.price) }}
+                        </Badge>
                         <span v-if="event.images.length > 1" class="absolute bottom-3 right-3 flex gap-1">
                             <span
                                 v-for="(img, idx) in event.images"
@@ -117,6 +143,10 @@ onBeforeUnmount(() => observer?.disconnect());
                             <span class="flex items-center gap-1.5 text-foreground/80">
                                 <CalendarDays class="size-4 shrink-0 text-primary" />
                                 {{ formatDate(event.date_time) }}
+                            </span>
+                            <span v-if="event.venue" class="flex items-center gap-1.5 text-foreground/80">
+                                <Building2 class="size-4 shrink-0 text-primary" />
+                                <span class="truncate">{{ event.venue }}</span>
                             </span>
                         </div>
                     </CardContent>
