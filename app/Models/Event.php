@@ -55,15 +55,20 @@ class Event extends Model
         return $this->event_time ? Carbon::createFromTimestampUTC((int) $this->event_time) : null;
     }
 
-    /** @return array{city: string, country: string, label: string}|null */
+    /** Cached location label, falling back to the offline nearest-city lookup. */
     public function location(): ?array
     {
-        return CityGeocoder::nearest($this->latitude, $this->longitude);
+        if (! empty($this->location_label)) {
+            return ['label' => $this->location_label];
+        }
+
+        $near = CityGeocoder::nearest($this->latitude, $this->longitude);
+
+        return $near ? ['label' => $near['label']] : null;
     }
 
     /**
-     * Flat, frontend-friendly representation containing exactly the fields the
-     * UI needs: title, description, location, date/time and images.
+     * Flat representation for the frontend.
      *
      * @return array<string, mixed>
      */

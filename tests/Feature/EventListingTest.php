@@ -2,8 +2,11 @@
 
 use App\Models\Event;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 
 uses(RefreshDatabase::class);
+
+beforeEach(fn () => Http::fake(['nominatim.openstreetmap.org/*' => Http::response('', 500)]));
 
 it('renders the events landing page', function () {
     $this->get(route('events.index'))

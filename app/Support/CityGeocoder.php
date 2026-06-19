@@ -4,14 +4,7 @@ namespace App\Support;
 
 use App\Models\Event;
 
-/**
- * Offline reverse-geocoder.
- *
- * The seeder places every event by jittering one of a fixed set of city
- * anchors (see EventSeeder::CITY_ANCHORS), so we can recover a human-readable
- * location without any external API: find the nearest known city to the given
- * coordinates. This is instant, deterministic, network-free and rate-limit-free.
- */
+/** Offline reverse-geocoder: maps coordinates to the nearest known city. */
 class CityGeocoder
 {
     /**
@@ -62,13 +55,28 @@ class CityGeocoder
         [1.3521, 103.8198, 'Singapore', 'Singapore'], [-33.8688, 151.2093, 'Sydney', 'Australia'],
         [-37.8136, 144.9631, 'Melbourne', 'Australia'], [25.2048, 55.2708, 'Dubai', 'UAE'],
         [-23.5505, -46.6333, 'São Paulo', 'Brazil'], [-34.6037, -58.3816, 'Buenos Aires', 'Argentina'],
+        // South Asia
+        [33.6844, 73.0479, 'Islamabad', 'Pakistan'], [24.8607, 67.0011, 'Karachi', 'Pakistan'],
+        [31.5204, 74.3587, 'Lahore', 'Pakistan'], [28.6139, 77.2090, 'New Delhi', 'India'],
+        [19.0760, 72.8777, 'Mumbai', 'India'], [12.9716, 77.5946, 'Bengaluru', 'India'],
+        [23.8103, 90.4125, 'Dhaka', 'Bangladesh'], [27.7172, 85.3240, 'Kathmandu', 'Nepal'],
+        [6.9271, 79.8612, 'Colombo', 'Sri Lanka'],
+        // Middle East & Africa
+        [24.7136, 46.6753, 'Riyadh', 'Saudi Arabia'], [25.2854, 51.5310, 'Doha', 'Qatar'],
+        [29.3759, 47.9774, 'Kuwait City', 'Kuwait'], [35.6892, 51.3890, 'Tehran', 'Iran'],
+        [41.0082, 28.9784, 'Istanbul', 'Turkey'], [30.0444, 31.2357, 'Cairo', 'Egypt'],
+        [-26.2041, 28.0473, 'Johannesburg', 'South Africa'], [6.5244, 3.3792, 'Lagos', 'Nigeria'],
+        [-1.2921, 36.8219, 'Nairobi', 'Kenya'],
+        // East & SE Asia
+        [31.2304, 121.4737, 'Shanghai', 'China'], [39.9042, 116.4074, 'Beijing', 'China'],
+        [22.3193, 114.1694, 'Hong Kong', 'China'], [13.7563, 100.5018, 'Bangkok', 'Thailand'],
+        [3.1390, 101.6869, 'Kuala Lumpur', 'Malaysia'], [-6.2088, 106.8456, 'Jakarta', 'Indonesia'],
+        [14.5995, 120.9842, 'Manila', 'Philippines'], [21.0278, 105.8342, 'Hanoi', 'Vietnam'],
+        // Oceania
+        [-36.8485, 174.7633, 'Auckland', 'New Zealand'],
     ];
 
-    /**
-     * Nearest city to the coordinates, as a human-readable string.
-     *
-     * @return array{city: string, country: string, label: string}|null
-     */
+    /** @return array{city: string, country: string, label: string}|null */
     public static function nearest(?float $lat, ?float $lng): ?array
     {
         if ($lat === null || $lng === null) {
@@ -90,11 +98,7 @@ class CityGeocoder
         return $best;
     }
 
-    /**
-     * Sorted, unique list of "City, Country" labels for the full city list.
-     *
-     * @return list<string>
-     */
+    /** @return list<string> */
     public static function labels(): array
     {
         $labels = array_map(fn ($c) => "{$c[2]}, {$c[3]}", self::CITIES);
@@ -105,26 +109,24 @@ class CityGeocoder
     }
 
     /**
-     * Distinct, human-readable locations actually present in the given events.
-     * Each event's coordinates are reverse-geocoded to its nearest city, then
-     * the labels are de-duplicated — so the filter only offers cities that have
-     * events. Operates on distinct coordinate pairs to stay cheap at scale.
+     * Distinct location labels present across all events (for filter dropdowns).
      *
      * @return list<string>
      */
     public static function labelsForEvents(): array
     {
-        $pairs = Event::query()
+        $rows = Event::query()
             ->whereNotNull('latitude')
             ->whereNotNull('longitude')
             ->distinct()
-            ->get(['latitude', 'longitude']);
+            ->get(['latitude', 'longitude', 'location_label']);
 
         $found = [];
-        foreach ($pairs as $pair) {
-            $near = self::nearest((float) $pair->latitude, (float) $pair->longitude);
-            if ($near) {
-                $found[$near['label']] = true;
+        foreach ($rows as $row) {
+            // Prefer the cached, reverse-geocoded label; fall back to offline.
+            $label = $row->location_label ?: (self::nearest((float) $row->latitude, (float) $row->longitude)['label'] ?? null);
+            if ($label) {
+                $found[$label] = true;
             }
         }
 
@@ -135,9 +137,7 @@ class CityGeocoder
     }
 
     /**
-     * Bounding box around a "City, Country" label, used to filter events by
-     * location in SQL. The seeder jitters ±0.5° around each anchor, so a 0.6°
-     * box safely captures that city's events. Returns null for unknown labels.
+     * Coordinate bounding box around a known city label (null if unknown).
      *
      * @return array{minLat: float, maxLat: float, minLng: float, maxLng: float}|null
      */

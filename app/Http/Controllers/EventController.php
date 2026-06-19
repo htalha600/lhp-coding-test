@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Requests\StoreEventRequest;
 use App\Models\Event;
 use App\Support\CityGeocoder;
+use App\Support\Geocoder;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -63,6 +64,7 @@ class EventController extends Controller
             'event_time' => $dateTime->timestamp,
             'latitude' => $data['latitude'],
             'longitude' => $data['longitude'],
+            'location_label' => Geocoder::resolve((float) $data['latitude'], (float) $data['longitude']),
             'payload' => [
                 'name' => $data['title'],
                 'description' => $data['description'] ?? '',
@@ -141,12 +143,18 @@ class EventController extends Controller
             $query->where('event_time', '<=', Carbon::parse($to)->endOfDay()->timestamp);
         }
 
-        // Filter by location via a coordinate bounding box for the chosen city.
         if ($city = $request->input('city')) {
-            if ($box = CityGeocoder::boundingBox($city)) {
-                $query->whereBetween('latitude', [$box['minLat'], $box['maxLat']])
-                    ->whereBetween('longitude', [$box['minLng'], $box['maxLng']]);
-            }
+            $box = CityGeocoder::boundingBox($city);
+            $query->where(function ($q) use ($city, $box) {
+                $q->where('location_label', $city);
+                if ($box) {
+                    $q->orWhere(function ($inner) use ($box) {
+                        $inner->whereNull('location_label')
+                            ->whereBetween('latitude', [$box['minLat'], $box['maxLat']])
+                            ->whereBetween('longitude', [$box['minLng'], $box['maxLng']]);
+                    });
+                }
+            });
         }
 
         // Newest-added events first.

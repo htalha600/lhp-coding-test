@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Support\CityGeocoder;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 
@@ -108,6 +109,7 @@ class EventSeeder extends Seeder
                     'event_time' => $eventTime,
                     'latitude' => $latitude,
                     'longitude' => $longitude,
+                    'location_label' => CityGeocoder::nearest($latitude, $longitude)['label'] ?? null,
                     'payload' => json_encode([
                         'name' => $name,
                         'description' => "Join us for {$name} — an event you won't want to miss.",
